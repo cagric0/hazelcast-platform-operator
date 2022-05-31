@@ -2,7 +2,6 @@ package hazelcast
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"github.com/go-logr/logr"
@@ -43,7 +42,6 @@ func NewWanConfigurationReconciler(client client.Client, log logr.Logger) *WanCo
 func (r *WanConfigurationReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := r.WithValues("name", req.Name, "namespace", req.NamespacedName)
 
-	logger.Info("Fetching WAN configuration")
 	wan := &hazelcastcomv1alpha1.WanConfiguration{}
 	if err := r.Get(ctx, req.NamespacedName, wan); err != nil {
 		if kerrors.IsNotFound(err) {
@@ -55,7 +53,6 @@ func (r *WanConfigurationReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 	ctx = context.WithValue(ctx, "logger", logger)
 
-	logger.Info("Getting Hazelcast client")
 	cli, err := r.getHazelcastClient(ctx, wan)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -86,15 +83,6 @@ func (r *WanConfigurationReconciler) Reconcile(ctx context.Context, req ctrl.Req
 
 	logger.Info("Applying WAN configuration")
 	if err := r.applyWanConfiguration(ctx, cli, wan); err != nil {
-		if errors.Is(err, &noAdded{}) {
-			logger.Info("WAN configuration is previously deleted, resuming it")
-			if err := r.resumeWanConfiguration(ctx, cli, wan); err != nil {
-				logger.Info("Failed to resume WAN configuration")
-				return ctrl.Result{}, err
-			}
-			logger.Info("WAN configuration is resumed")
-			return ctrl.Result{}, nil
-		}
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
@@ -139,14 +127,10 @@ func (r *WanConfigurationReconciler) applyWanConfiguration(ctx context.Context, 
 		convertAckType(wan.Spec.Acknowledgement.Type),
 		convertQueueBehavior(wan.Spec.Queue.FullBehavior),
 	}
-	resp, err := addBatchPublisherConfig(ctx, client, req)
+	_, err = addBatchPublisherConfig(ctx, client, req)
 	if err != nil {
 		return fmt.Errorf("failed to apply WAN configuration: %w", err)
 	}
-	if len(resp.added) == 0 {
-		return &noAdded{}
-	}
-
 	return nil
 }
 
@@ -196,13 +180,8 @@ func (r *WanConfigurationReconciler) saveToStore(ctx context.Context, wan *hazel
 }
 
 func (r *WanConfigurationReconciler) isInStore(ctx context.Context, wan *hazelcastcomv1alpha1.WanConfiguration) (bool, error) {
-	cm := &corev1.ConfigMap{
-		ObjectMeta: v1.ObjectMeta{
-			Name:      "wan-store-for-" + wan.Spec.TargetClusterName + "-" + wan.Spec.MapResourceName,
-			Namespace: wan.GetNamespace(),
-		},
-	}
-	if err := util.CreateOrGet(ctx, r.Client, client.ObjectKeyFromObject(cm), cm); err != nil {
+	cm, err := r.getConfigMap(ctx, wan)
+	if err != nil {
 		return false, err
 	}
 	if cm.Data == nil {
@@ -213,13 +192,7 @@ func (r *WanConfigurationReconciler) isInStore(ctx context.Context, wan *hazelca
 }
 
 func (r *WanConfigurationReconciler) deleteFromStore(ctx context.Context, wan *hazelcastcomv1alpha1.WanConfiguration) (string, error) {
-	cm := &corev1.ConfigMap{
-		ObjectMeta: v1.ObjectMeta{
-			Name:      "wan-store-for-" + wan.Spec.TargetClusterName + "-" + wan.Spec.MapResourceName,
-			Namespace: wan.GetNamespace(),
-		},
-	}
-	err := r.Client.Get(ctx, client.ObjectKeyFromObject(cm), cm)
+	cm, err := r.getConfigMap(ctx, wan)
 	if err != nil {
 		return "", err
 	}
@@ -237,6 +210,19 @@ func (r *WanConfigurationReconciler) deleteFromStore(ctx context.Context, wan *h
 	}
 
 	return name, nil
+}
+
+func (r *WanConfigurationReconciler) getConfigMap(ctx context.Context, wan *hazelcastcomv1alpha1.WanConfiguration) (*corev1.ConfigMap, error) {
+	cm := &corev1.ConfigMap{
+		ObjectMeta: v1.ObjectMeta{
+			Name:      "wan-target-" + wan.Spec.TargetClusterName + "-map-" + wan.Spec.MapResourceName,
+			Namespace: wan.GetNamespace(),
+		},
+	}
+	if err := util.CreateOrGet(ctx, r.Client, client.ObjectKeyFromObject(cm), cm); err != nil {
+		return nil, err
+	}
+	return cm, nil
 }
 
 func hazelcastWanConfigurationName(mapName string) string {
@@ -268,7 +254,6 @@ func addBatchPublisherConfig(
 ) (*addBatchPublisherResponse, error) {
 	cliInt := hazelcast.NewClientInternal(client)
 
-	logger := ctx.Value("logger").(logr.Logger)
 	req := codec.EncodeMCAddWanBatchPublisherConfigRequest(
 		request.name,
 		request.targetCluster,
@@ -282,35 +267,14 @@ func addBatchPublisherConfig(
 		request.queueFullBehavior,
 	)
 
-	respsAdded := make([][]string, 0)
-	respsIgnored := make([][]string, 0)
 	for _, member := range cliInt.OrderedMembers() {
 		resp, err := cliInt.InvokeOnMember(ctx, req, member.UUID, nil)
 		if err != nil {
 			return nil, err
 		}
-		added, ignored := codec.DecodeMCAddWanBatchPublisherConfigResponse(resp)
-		logger.Info("addWanBatchPublisher decoded", "added", added, "ignored", ignored)
-		respsAdded, respsIgnored = append(respsAdded, added), append(respsIgnored, ignored)
+		_, _ = codec.DecodeMCAddWanBatchPublisherConfigResponse(resp)
 	}
-
-	added, ignored := inferValidResponse(respsAdded, respsIgnored)
-	return &addBatchPublisherResponse{
-		added:   added,
-		ignored: ignored,
-	}, nil
-}
-
-func inferValidResponse(added [][]string, ignored [][]string) ([]string, []string) {
-	mostAddedIndex := -1
-	mostAddedLen := -1
-	for i := 0; i < len(added); i++ {
-		if len(added[i]) > mostAddedLen {
-			mostAddedIndex = i
-			mostAddedLen = len(added[i])
-		}
-	}
-	return added[mostAddedIndex], ignored[mostAddedIndex]
+	return &addBatchPublisherResponse{}, nil
 }
 
 type changeWanStateRequest struct {
@@ -359,28 +323,4 @@ func convertQueueBehavior(behavior hazelcastcomv1alpha1.FullBehaviorSetting) int
 	default:
 		return -1
 	}
-}
-
-func checkResponsesEqual(resps [][]string) bool {
-	if len(resps) <= 1 {
-		return true
-	}
-	for i := 0; i < len(resps)-1; i++ {
-		if len(resps[i]) != len(resps[i+1]) {
-			return false
-		}
-		for j := 0; j < len(resps[i]); j++ {
-			if resps[i][j] != resps[i+1][j] {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-type noAdded struct {
-}
-
-func (*noAdded) Error() string {
-	return "no publisher is added"
 }
