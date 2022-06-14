@@ -2,6 +2,7 @@ package hazelcast
 
 import (
 	"context"
+
 	hazelcastv1alpha1 "github.com/hazelcast/hazelcast-platform-operator/api/v1alpha1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -43,7 +44,7 @@ func updateHotBackupStatus(ctx context.Context, c client.Client, hb *hazelcastv1
 	return ctrl.Result{}, err
 }
 
-func hotBackupState(hbs HotRestartState, currentState hazelcastv1alpha1.HotBackupState) hazelcastv1alpha1.HotBackupState {
+func hotBackupState(hbs HotRestartState, currentState hazelcastv1alpha1.HotBackupState, backupType hazelcastv1alpha1.BackupType) hazelcastv1alpha1.HotBackupState {
 	switch hbs.BackupTaskState {
 	case "NOT_STARTED":
 		if currentState == hazelcastv1alpha1.HotBackupUnknown {
@@ -54,9 +55,19 @@ func hotBackupState(hbs HotRestartState, currentState hazelcastv1alpha1.HotBacku
 	case "FAILURE":
 		return hazelcastv1alpha1.HotBackupFailure
 	case "SUCCESS":
-		if currentState == hazelcastv1alpha1.HotBackupUnknown {
+		switch currentState {
+		case hazelcastv1alpha1.HotBackupUnknown:
+			switch backupType {
+			case hazelcastv1alpha1.External:
+				// for external we have to wait for sidecar agent
+				return hazelcastv1alpha1.HotBackupWaiting
+			case hazelcastv1alpha1.Local:
+				return hazelcastv1alpha1.HotBackupSuccess
+			}
+		case hazelcastv1alpha1.HotBackupWaiting:
 			return hazelcastv1alpha1.HotBackupSuccess
 		}
+
 	default:
 		return hazelcastv1alpha1.HotBackupUnknown
 	}

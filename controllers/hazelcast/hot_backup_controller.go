@@ -5,15 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/hazelcast/hazelcast-platform-operator/controllers/hazelcast/validation"
 	"strconv"
 	"sync"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
-
 	"github.com/go-logr/logr"
 	"github.com/robfig/cron/v3"
+	corev1 "k8s.io/api/core/v1"
 	apiErrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -22,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	hazelcastv1alpha1 "github.com/hazelcast/hazelcast-platform-operator/api/v1alpha1"
+	"github.com/hazelcast/hazelcast-platform-operator/controllers/hazelcast/validation"
 	n "github.com/hazelcast/hazelcast-platform-operator/internal/naming"
 	"github.com/hazelcast/hazelcast-platform-operator/internal/util"
 )
@@ -200,7 +199,7 @@ func (r *HotBackupReconciler) updateHotBackupStatus(hzClient *Client, ctx contex
 			continue
 		}
 		r.Log.V(util.DebugLevel).Info("Received HotBackup state for member.", "HotRestartState", state)
-		currentState = hotBackupState(state.TimedMemberState.MemberState.HotRestartState, currentState)
+		currentState = hotBackupState(state.TimedMemberState.MemberState.HotRestartState, currentState, hazelcastv1alpha1.Local)
 	}
 	_, err = updateHotBackupStatus(ctx, r.Client, hb, hbWithStatus(currentState))
 	if err != nil {
