@@ -147,6 +147,11 @@ func (r *HotBackupReconciler) Reconcile(ctx context.Context, req reconcile.Reque
 		if err != nil {
 			return updateHotBackupStatus(ctx, r.Client, hb, failedHbStatus(fmt.Errorf("error while uploading the backup: %w", err)))
 		}
+
+		r, err := updateHotBackupStatus(ctx, r.Client, hb, hbWithStatus(hazelcastv1alpha1.HotBackupSuccess))
+		if err != nil {
+			return r, err
+		}
 	}
 
 	err = r.updateLastSuccessfulConfiguration(ctx, hb, logger)
@@ -314,7 +319,7 @@ func (r *HotBackupReconciler) triggerUploadBackup(ctx context.Context, h *hazelc
 			return fmt.Errorf("failed to get HotBackup: %w", err)
 		}
 		if hb.Status.State.IsFinished() {
-			if hb.Status.State == hazelcastv1alpha1.HotBackupSuccess {
+			if hb.Status.State == hazelcastv1alpha1.HotBackupWaiting {
 				err := agentRest.UploadBackup(ctx)
 				if err != nil {
 					return fmt.Errorf("failed to upload backup folders to external storage: %w", err)
