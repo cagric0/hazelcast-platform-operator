@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/hazelcast/hazelcast-platform-operator/controllers/hazelcast/validation"
 	"hash/crc32"
 	"net"
 	"strconv"
@@ -23,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	hazelcastv1alpha1 "github.com/hazelcast/hazelcast-platform-operator/api/v1alpha1"
+	"github.com/hazelcast/hazelcast-platform-operator/controllers/hazelcast/validation"
 	"github.com/hazelcast/hazelcast-platform-operator/internal/config"
 	n "github.com/hazelcast/hazelcast-platform-operator/internal/naming"
 	"github.com/hazelcast/hazelcast-platform-operator/internal/platform"
@@ -674,7 +674,7 @@ func (r *HazelcastReconciler) reconcileStatefulset(ctx context.Context, h *hazel
 				logger.Error(err, "Invalid RestoreConfiguration")
 				return err
 			}
-			provider, err := h.Spec.Persistence.Restore.GetProvider()
+			provider, err := hazelcastv1alpha1.BucketConfiguration(*h.Spec.Persistence.Restore).GetProvider()
 			if err != nil {
 				logger.Error(err, "Failed to create init container for restore operation")
 				return err
@@ -728,6 +728,17 @@ func (r *HazelcastReconciler) reconcileStatefulset(ctx context.Context, h *hazel
 		} else {
 			sts.Spec.Template.Spec.Containers[0].Resources = v1.ResourceRequirements{}
 		}
+
+		if h.Spec.CustomClass.IsEnabled() {
+			sts.Spec.Template.Spec.Volumes = append(sts.Spec.Template.Spec.Volumes, customClassVolume(h))
+			provider, err := hazelcastv1alpha1.BucketConfiguration(*h.Spec.CustomClass).GetProvider()
+			if err != nil {
+				return err
+			}
+			sts.Spec.Template.Spec.InitContainers = append(sts.Spec.Template.Spec.InitContainers, ccdAgentContainer(h, provider))
+			sts.Spec.Template.Spec.Containers[0].VolumeMounts = append(sts.Spec.Template.Spec.Containers[0].VolumeMounts, ccdAgentVolumeMount(h))
+
+		}
 		return nil
 	})
 	if opResult != controllerutil.OperationResultNone {
@@ -749,7 +760,14 @@ func restoreAgentVolumeMounts(h *hazelcastv1alpha1.Hazelcast, provider string) [
 	return volumeMounts
 }
 
-func restoreAgentCredentials(secret string, provider string) []v1.EnvVar {
+func ccdAgentVolumeMount(h *hazelcastv1alpha1.Hazelcast) v1.VolumeMount {
+	return v1.VolumeMount{
+		Name:      n.CustomClassVolumeName,
+		MountPath: n.UserCustomClassPath,
+	}
+}
+
+func agentCredentials(secret string, provider string) []v1.EnvVar {
 	switch provider {
 	case n.AWS:
 		return []v1.EnvVar{
@@ -874,7 +892,7 @@ func restoreAgentContainer(h *hazelcastv1alpha1.Hazelcast, provider string) v1.C
 		Name:  n.RestoreAgent,
 		Image: h.AgentDockerImage(),
 		Args:  []string{"restore"},
-		Env: append(restoreAgentCredentials(h.Spec.Persistence.Restore.Secret, provider),
+		Env: append(agentCredentials(h.Spec.Persistence.Restore.Secret, provider),
 			v1.EnvVar{
 				Name:  "RESTORE_BUCKET",
 				Value: h.Spec.Persistence.Restore.BucketURI,
@@ -896,6 +914,33 @@ func restoreAgentContainer(h *hazelcastv1alpha1.Hazelcast, provider string) v1.C
 	}
 }
 
+func ccdAgentContainer(h *hazelcastv1alpha1.Hazelcast, provider string) v1.Container {
+	return v1.Container{
+		Name:  n.RestoreAgent,
+		Image: h.AgentDockerImage(),
+		Args:  []string{"custom_class_download"},
+		Env: append(agentCredentials(h.Spec.Persistence.Restore.Secret, provider),
+			v1.EnvVar{
+				Name:  "CCD_BUCKET",
+				Value: h.Spec.CustomClass.BucketURI,
+			},
+			v1.EnvVar{
+				Name:  "CCD_DESTINATION",
+				Value: n.UserCustomClassPath,
+			},
+			v1.EnvVar{
+				Name: "CCD_HOSTNAME",
+				ValueFrom: &v1.EnvVarSource{
+					FieldRef: &v1.ObjectFieldSelector{
+						FieldPath: "metadata.name",
+					},
+				},
+			},
+		),
+		VolumeMounts: []v1.VolumeMount{ccdAgentVolumeMount(h)},
+	}
+}
+
 func volumes(h *hazelcastv1alpha1.Hazelcast) []v1.Volume {
 	return []v1.Volume{
 		{
@@ -907,6 +952,15 @@ func volumes(h *hazelcastv1alpha1.Hazelcast) []v1.Volume {
 					},
 				},
 			},
+		},
+	}
+}
+
+func customClassVolume(h *hazelcastv1alpha1.Hazelcast) v1.Volume {
+	return v1.Volume{
+		Name: n.CustomClassVolumeName,
+		VolumeSource: v1.VolumeSource{
+			EmptyDir: &v1.EmptyDirVolumeSource{},
 		},
 	}
 }
