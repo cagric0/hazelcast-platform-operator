@@ -246,7 +246,7 @@ var _ = Describe("Hazelcast CR with Persistence feature enabled", Label("hz_pers
 		Entry("with HostPath configuration multiple nodes", Label("slow"), "/tmp/hazelcast/multiNode"),
 	)
 
-	DescribeTable("should successfully restart from HotBackup data", func(bucketURI, secretName string) {
+	FDescribeTable("should successfully restart from HotBackup data", func(bucketURI, secretName string) {
 		if !ee {
 			Skip("This test will only run in EE configuration")
 		}
@@ -293,6 +293,7 @@ var _ = Describe("Hazelcast CR with Persistence feature enabled", Label("hz_pers
 		test.EventuallyInLogs(scanner, 1*Second, logInterval).Should(ContainSubstring("Local Hot Restart procedure completed with success."))
 	},
 		Entry("using AWS S3 bucket", Label("slow"), "s3://hazelcast-cn-306-restore-tests", "br-secret-s3"),
+		Entry("using GCP bucket", Label("slow"), "gs://operator-agent-backup", "br-secret-gcp"),
 	)
 })
 
