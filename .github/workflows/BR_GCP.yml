@@ -96,7 +96,7 @@ jobs:
           
           kubectl create secret generic br-secret-gcp --namespace ${NAMESPACE} --from-literal=google-credentials-path='${{ secrets.GKE_SA_KEY }}'
 
-          k create secret generic br-secret-az --namespace ${NAMESPACE} \
+          kubectl create secret generic br-secret-az --namespace ${NAMESPACE} \
             --from-literal=storage-account=cagritest \
             --from-literal=storage-key=${{ secrets.AZURE_STORAGE_KEY }}
             
