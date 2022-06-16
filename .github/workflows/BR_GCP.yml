@@ -19,7 +19,6 @@ jobs:
         edition: ["ee"]
     env:
       IMG: hazelcast/hazelcast-platform-operator:latest-snapshot
-      CLUSTER_NAME: ${{ env.CLUSTER_NAME }}
       NAME_PREFIX: hp-${{ matrix.edition }}-${{ github.run_id }}-
       KUBECTL_VERSION: 1.22.0
 
