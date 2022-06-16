@@ -97,7 +97,7 @@ jobs:
           kubectl create secret generic br-secret-gcp --namespace ${NAMESPACE} --from-literal=google-credentials-path='${{ secrets.GKE_SA_KEY }}'
 
           kubectl create secret generic br-secret-az --namespace ${NAMESPACE} \
-            --from-literal=storage-account=cagritest \
+            --from-literal=storage-account=operatortest \
             --from-literal=storage-key=${{ secrets.AZURE_STORAGE_KEY }}
             
       - name: Run Hazelcast E2E tests at GKE
